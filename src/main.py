@@ -17,62 +17,79 @@ def detect_floor(image):
 
     return mask
 
-def detect_changes_absdiff(image_reference_path, images_changed_path):
-    # Load the reference image
-    image_reference_raw = cv2.imread(image_reference_path)
-    image_reference = imutils.resize(image_reference_raw, width=800)
+# Function to preprocess the image: resize, apply masks, convert to grayscale, and equalize histograms
+def preprocess_image(image_path):
+    image_raw = cv2.imread(image_path)
+    image_resized = imutils.resize(image_raw, width=800)
 
-    # Load the changed image
-    image_changed_raw = cv2.imread(images_changed_path)
-    image_changed = imutils.resize(image_changed_raw, width=800)
+    # Detect the floor and apply the floor mask
+    floor_mask = detect_floor(image_resized)
+    floor_image = cv2.bitwise_and(image_resized, image_resized, mask=floor_mask)
 
-    # Detect the floor in both images
-    floor_mask_ref = detect_floor(image_reference)
-    floor_mask_changed = detect_floor(image_changed)
+    # Convert the floor area to grayscale and equalize the histogram
+    gray_image = cv2.cvtColor(floor_image, cv2.COLOR_BGR2GRAY)
+    equalized_image = cv2.equalizeHist(gray_image)
 
-    # Apply the masks to isolate the floor
-    floor_ref = cv2.bitwise_and(image_reference, image_reference, mask=floor_mask_ref)
-    floor_changed = cv2.bitwise_and(image_changed, image_changed, mask=floor_mask_changed)
+    return equalized_image
 
-    # Convert the images to grayscale
-    gray_ref = cv2.cvtColor(floor_ref, cv2.COLOR_BGR2GRAY)
-    gray_changed = cv2.cvtColor(floor_changed, cv2.COLOR_BGR2GRAY)
+# Function to calculate absolute difference and apply Gaussian blur
+def calculate_absdiff(image_ref, image_changed):
+    diff = cv2.absdiff(image_ref, image_changed)
+    blurred_diff = cv2.GaussianBlur(diff, (3, 3), 0)
+    return blurred_diff
 
-    # Apply histogram equalization for better contrast
-    gray_ref = cv2.equalizeHist(gray_ref)
-    gray_changed = cv2.equalizeHist(gray_changed)
+# Function to apply thresholding to isolate significant differences
+def apply_threshold(blurred_diff, threshold_value):
+    _, thresholded_diff = cv2.threshold(blurred_diff, threshold_value, 255, cv2.THRESH_BINARY)
+    return thresholded_diff
 
-    # Calculate the absolute difference between the two images
-    diff = cv2.absdiff(gray_ref, gray_changed)
-    cv2.imshow("jgl diff", diff)
+# Function to apply Canny edge detection and clean up the edges with morphological operations
+def detect_edges(thresholded_diff):
+    edges = cv2.Canny(thresholded_diff, 150, 55)
+    kernel = np.ones((9, 9), np.uint8)  # Smaller kernel to preserve details
+    cleaned_edges = cv2.morphologyEx(edges, cv2.MORPH_CLOSE, kernel)
+    return cleaned_edges
 
-    # Apply Gaussian blur to reduce noise
-    blurred_diff = cv2.GaussianBlur(diff, (9, 9), 0)
-    cv2.imshow("blurred diff", blurred_diff)
-
-    # Threshold to isolate changes
-    _, thresh = cv2.threshold(blurred_diff, 95, 255, cv2.THRESH_BINARY)
-    #cv2.imshow("thresh", thresh)
-
-    # Clean up small elements with morphological operations
-    kernel = np.ones((201, 201), np.uint8)
-    cleaned = cv2.morphologyEx(thresh, cv2.MORPH_CLOSE, kernel)
-
-    # Detect contours around changes
-    contours, _ = cv2.findContours(cleaned, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-
-    # Draw bounding boxes around changes
+# Function to find and draw bounding boxes around detected contours
+def draw_contours(image_changed, contours):
     for contour in contours:
-        if cv2.contourArea(contour) > 10:  # Adjust threshold as needed
+        if cv2.contourArea(contour) > 1200:  # Adjust threshold for object size
             x, y, w, h = cv2.boundingRect(contour)
             cv2.rectangle(image_changed, (x, y), (x + w, y + h), (0, 255, 0), 2)
+    return image_changed
 
-    # Show the image with detected changes
-    cv2.imshow("Changes Detected", image_changed)
+# Combined function that calls all helper functions and displays the detected changes
+def detect_changes(image_reference_path, image_changed_path, threshold_value):
+    # Preprocess both reference and changed images
+    gray_ref = preprocess_image(image_reference_path)
+    gray_changed = preprocess_image(image_changed_path)
+
+    # Calculate absolute difference and blur
+    blurred_diff = calculate_absdiff(gray_ref, gray_changed)
+
+    # Apply thresholding to isolate significant differences
+    thresholded_diff = apply_threshold(blurred_diff, threshold_value)
+
+    # Perform edge detection and clean edges
+    cleaned_edges = detect_edges(thresholded_diff)
+
+    # Detect contours in the cleaned edge image
+    contours, _ = cv2.findContours(cleaned_edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+
+    # Load and resize the changed image to draw bounding boxes
+    image_changed_raw = cv2.imread(image_changed_path)
+    image_changed = imutils.resize(image_changed_raw, width=800)
+
+    # Draw bounding boxes around detected contours
+    image_with_contours = draw_contours(image_changed, contours)
+
+    # Display the result
+    cv2.imshow("Detected Changes", image_with_contours)
     cv2.waitKey(0)
     cv2.destroyAllWindows()
 
 # Example usage
 ref_name = "/Reference.JPG" if os.name != 'nt' else "\\Reference.JPG"
-img_name = "/IMG_6560.JPG" if os.name != 'nt' else "\\IMG_6568.JPG"
-detect_changes_absdiff(config.chambre_path + ref_name, config.chambre_path + img_name)
+img_name = "/IMG_6560.JPG" if os.name != 'nt' else "\\IMG_6557.JPG"
+threshold_value = 95  # Adjust this value based on your needs
+detect_changes(config.salon_path + ref_name, config.salon_path + img_name, threshold_value)
