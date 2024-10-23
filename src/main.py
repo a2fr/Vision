@@ -2,6 +2,7 @@ import cv2
 import numpy as np
 import imutils
 import config
+import os
 
 def detect_floor(image):
     # Convert image to LAB color space for better lighting robustness
@@ -94,4 +95,6 @@ def detect_changes_absdiff(image_reference_path, images_changed_path):
     cv2.destroyAllWindows()
 
 # Example usage
-detect_changes_absdiff(config.salon_path + "\\Reference.JPG", config.salon_path + "\\IMG_6552.JPG")
+ref_name = "/Reference.JPG" if os.name != 'nt' else "\\Reference.JPG"
+img_name = "/IMG_6552.JPG" if os.name != 'nt' else "\\IMG_6552.JPG"
+detect_changes_absdiff(config.salon_path + ref_name, config.salon_path + img_name)
