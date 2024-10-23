@@ -3,38 +3,43 @@ import numpy as np
 import imutils
 import config
 
+def detect_floor(image):
+    # Convert image to LAB color space for better lighting robustness
+    lab = cv2.cvtColor(image, cv2.COLOR_BGR2LAB)
+    l_channel, a, b = cv2.split(lab)
 
-def segment_floor(image, k_clusters=2):
-    # Resize image for faster computation if needed
-    image_resized = imutils.resize(image, width=800)
+    # Perform CLAHE (Contrast Limited Adaptive Histogram Equalization) to reduce lighting variations
+    clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+    l_channel = clahe.apply(l_channel)
+    lab = cv2.merge((l_channel, a, b))
+    hsv = cv2.cvtColor(lab, cv2.COLOR_LAB2BGR)
+    hsv = cv2.cvtColor(hsv, cv2.COLOR_BGR2HSV)
 
-    # Convert image to LAB color space for better lighting handling
-    lab = cv2.cvtColor(image_resized, cv2.COLOR_BGR2LAB)
-    pixels = lab.reshape((-1, 3))
+    # Define a broad range for floor color detection
+    lower_floor = np.array([0, 0, 0])
+    upper_floor = np.array([180, 255, 60]) #[180, 255, 60]
 
-    # Apply K-Means clustering
-    kmeans = cv2.KMeans(n_clusters=k_clusters, random_state=0)
-    kmeans.fit(pixels)
-    labels = kmeans.labels_
+    # Create a mask for the floor color
+    mask_color = cv2.inRange(hsv, lower_floor, upper_floor)
 
-    # Reshape labels back to the original image shape
-    labels = labels.reshape(image_resized.shape[:2])
+    # Apply morphological operations to clean up the mask
+    kernel = np.ones((5, 5), np.uint8)
+    mask_color = cv2.morphologyEx(mask_color, cv2.MORPH_CLOSE, kernel)
+    mask_color = cv2.morphologyEx(mask_color, cv2.MORPH_OPEN, kernel)
 
-    # Create masks for each cluster
-    unique_labels = np.unique(labels)
-    masks = []
-    for label in unique_labels:
-        mask = np.zeros_like(labels, dtype=np.uint8)
-        mask[labels == label] = 255
-        masks.append(mask)
+    # Use adaptive thresholding to segment texture regions
+    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    mask_texture = cv2.adaptiveThreshold(gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
+                                         cv2.THRESH_BINARY_INV, 11, 2)
 
-    # Optionally, show the segmentation result for manual inspection
-    for i, mask in enumerate(masks):
-        cv2.imshow(f"Cluster {i}", mask)
+    # Ensure masks are the same size
+    mask_texture = cv2.resize(mask_texture, (mask_color.shape[1], mask_color.shape[0]))
 
-    # Return all cluster masks for further processing
-    return masks
+    # Combine color and texture masks
+    combined_mask = cv2.bitwise_and(mask_color, mask_texture)
+    cv2.imshow("Combined Mask", combined_mask)
 
+    return combined_mask
 
 def detect_changes_absdiff(image_reference_path, images_changed_path):
     # Load the reference image
@@ -45,14 +50,9 @@ def detect_changes_absdiff(image_reference_path, images_changed_path):
     image_changed_raw = cv2.imread(images_changed_path)
     image_changed = imutils.resize(image_changed_raw, width=800)
 
-    # Segment the floor using K-means clustering for both images
-    floor_masks_ref = segment_floor(image_reference)
-    floor_masks_changed = segment_floor(image_changed)
-
-    # You can manually select which cluster represents the floor, or apply logic to choose
-    # Here, we are assuming that the floor is represented by the first cluster (you can refine this logic)
-    floor_mask_ref = floor_masks_ref[0]
-    floor_mask_changed = floor_masks_changed[0]
+    # Detect the floor in both images
+    floor_mask_ref = detect_floor(image_reference)
+    floor_mask_changed = detect_floor(image_changed)
 
     # Apply the masks to isolate the floor
     floor_ref = cv2.bitwise_and(image_reference, image_reference, mask=floor_mask_ref)
@@ -92,7 +92,6 @@ def detect_changes_absdiff(image_reference_path, images_changed_path):
     cv2.imshow("Changes Detected", image_changed)
     cv2.waitKey(0)
     cv2.destroyAllWindows()
-
 
 # Example usage
 detect_changes_absdiff(config.salon_path + "\\Reference.JPG", config.salon_path + "\\IMG_6552.JPG")
