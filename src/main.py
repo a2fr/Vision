@@ -5,42 +5,17 @@ import config
 import os
 
 def detect_floor(image):
-    # Convert image to LAB color space for better lighting robustness
-    lab = cv2.cvtColor(image, cv2.COLOR_BGR2LAB)
-    l_channel, a, b = cv2.split(lab)
+    # Get the height and width of the image
+    height, width = image.shape[:2]
 
-    # Perform CLAHE (Contrast Limited Adaptive Histogram Equalization) to reduce lighting variations
-    clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
-    l_channel = clahe.apply(l_channel)
-    lab = cv2.merge((l_channel, a, b))
-    hsv = cv2.cvtColor(lab, cv2.COLOR_LAB2BGR)
-    hsv = cv2.cvtColor(hsv, cv2.COLOR_BGR2HSV)
+    # Create a mask that passes the bottom 4/5 of the image
+    mask = np.zeros((height, width), dtype=np.uint8)
 
-    # Define a broad range for floor color detection
-    lower_floor = np.array([0, 0, 0])
-    upper_floor = np.array([180, 255, 60]) #[180, 255, 60]
+    # Let the bottom 4/5 of the image pass by filling that region with white
+    bottom_start = height // 5  # Starting point for the bottom 4/5
+    mask[bottom_start:, :] = 255
 
-    # Create a mask for the floor color
-    mask_color = cv2.inRange(hsv, lower_floor, upper_floor)
-
-    # Apply morphological operations to clean up the mask
-    kernel = np.ones((5, 5), np.uint8)
-    mask_color = cv2.morphologyEx(mask_color, cv2.MORPH_CLOSE, kernel)
-    mask_color = cv2.morphologyEx(mask_color, cv2.MORPH_OPEN, kernel)
-
-    # Use adaptive thresholding to segment texture regions
-    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-    mask_texture = cv2.adaptiveThreshold(gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
-                                         cv2.THRESH_BINARY_INV, 11, 2)
-
-    # Ensure masks are the same size
-    mask_texture = cv2.resize(mask_texture, (mask_color.shape[1], mask_color.shape[0]))
-
-    # Combine color and texture masks
-    combined_mask = cv2.bitwise_and(mask_color, mask_texture)
-    cv2.imshow("Combined Mask", combined_mask)
-
-    return combined_mask
+    return mask
 
 def detect_changes_absdiff(image_reference_path, images_changed_path):
     # Load the reference image
@@ -69,15 +44,18 @@ def detect_changes_absdiff(image_reference_path, images_changed_path):
 
     # Calculate the absolute difference between the two images
     diff = cv2.absdiff(gray_ref, gray_changed)
+    cv2.imshow("jgl diff", diff)
 
     # Apply Gaussian blur to reduce noise
-    blurred_diff = cv2.GaussianBlur(diff, (91, 91), 0)
+    blurred_diff = cv2.GaussianBlur(diff, (9, 9), 0)
+    cv2.imshow("blurred diff", blurred_diff)
 
     # Threshold to isolate changes
-    _, thresh = cv2.threshold(blurred_diff, 60, 255, cv2.THRESH_BINARY)
+    _, thresh = cv2.threshold(blurred_diff, 95, 255, cv2.THRESH_BINARY)
+    #cv2.imshow("thresh", thresh)
 
     # Clean up small elements with morphological operations
-    kernel = np.ones((5, 5), np.uint8)
+    kernel = np.ones((201, 201), np.uint8)
     cleaned = cv2.morphologyEx(thresh, cv2.MORPH_CLOSE, kernel)
 
     # Detect contours around changes
@@ -85,7 +63,7 @@ def detect_changes_absdiff(image_reference_path, images_changed_path):
 
     # Draw bounding boxes around changes
     for contour in contours:
-        if cv2.contourArea(contour) > 500:  # Adjust threshold as needed
+        if cv2.contourArea(contour) > 10:  # Adjust threshold as needed
             x, y, w, h = cv2.boundingRect(contour)
             cv2.rectangle(image_changed, (x, y), (x + w, y + h), (0, 255, 0), 2)
 
@@ -96,5 +74,5 @@ def detect_changes_absdiff(image_reference_path, images_changed_path):
 
 # Example usage
 ref_name = "/Reference.JPG" if os.name != 'nt' else "\\Reference.JPG"
-img_name = "/IMG_6552.JPG" if os.name != 'nt' else "\\IMG_6552.JPG"
-detect_changes_absdiff(config.salon_path + ref_name, config.salon_path + img_name)
+img_name = "/IMG_6560.JPG" if os.name != 'nt' else "\\IMG_6568.JPG"
+detect_changes_absdiff(config.chambre_path + ref_name, config.chambre_path + img_name)
