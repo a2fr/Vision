@@ -17,79 +17,84 @@ def detect_floor(image):
 
     return mask
 
-# Function to preprocess the image: resize, apply masks, convert to grayscale, and equalize histograms
-def preprocess_image(image_path):
-    image_raw = cv2.imread(image_path)
-    image_resized = imutils.resize(image_raw, width=800)
+def detect_changes_absdiff(image_reference_path, images_changed_path, image_name):
+    # Load the reference image
+    image_reference_raw = cv2.imread(image_reference_path)
+    image_reference = imutils.resize(image_reference_raw, width=800)
 
-    # Detect the floor and apply the floor mask
-    floor_mask = detect_floor(image_resized)
-    floor_image = cv2.bitwise_and(image_resized, image_resized, mask=floor_mask)
-
-    # Convert the floor area to grayscale and equalize the histogram
-    gray_image = cv2.cvtColor(floor_image, cv2.COLOR_BGR2GRAY)
-    equalized_image = cv2.equalizeHist(gray_image)
-
-    return equalized_image
-
-# Function to calculate absolute difference and apply Gaussian blur
-def calculate_absdiff(image_ref, image_changed):
-    diff = cv2.absdiff(image_ref, image_changed)
-    blurred_diff = cv2.GaussianBlur(diff, (3, 3), 0)
-    return blurred_diff
-
-# Function to apply thresholding to isolate significant differences
-def apply_threshold(blurred_diff, threshold_value):
-    _, thresholded_diff = cv2.threshold(blurred_diff, threshold_value, 255, cv2.THRESH_BINARY)
-    return thresholded_diff
-
-# Function to apply Canny edge detection and clean up the edges with morphological operations
-def detect_edges(thresholded_diff):
-    edges = cv2.Canny(thresholded_diff, 150, 55)
-    kernel = np.ones((9, 9), np.uint8)  # Smaller kernel to preserve details
-    cleaned_edges = cv2.morphologyEx(edges, cv2.MORPH_CLOSE, kernel)
-    return cleaned_edges
-
-# Function to find and draw bounding boxes around detected contours
-def draw_contours(image_changed, contours):
-    for contour in contours:
-        if cv2.contourArea(contour) > 1200:  # Adjust threshold for object size
-            x, y, w, h = cv2.boundingRect(contour)
-            cv2.rectangle(image_changed, (x, y), (x + w, y + h), (0, 255, 0), 2)
-    return image_changed
-
-# Combined function that calls all helper functions and displays the detected changes
-def detect_changes(image_reference_path, image_changed_path, threshold_value):
-    # Preprocess both reference and changed images
-    gray_ref = preprocess_image(image_reference_path)
-    gray_changed = preprocess_image(image_changed_path)
-
-    # Calculate absolute difference and blur
-    blurred_diff = calculate_absdiff(gray_ref, gray_changed)
-
-    # Apply thresholding to isolate significant differences
-    thresholded_diff = apply_threshold(blurred_diff, threshold_value)
-
-    # Perform edge detection and clean edges
-    cleaned_edges = detect_edges(thresholded_diff)
-
-    # Detect contours in the cleaned edge image
-    contours, _ = cv2.findContours(cleaned_edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-
-    # Load and resize the changed image to draw bounding boxes
-    image_changed_raw = cv2.imread(image_changed_path)
+    # Load the changed image
+    image_changed_raw = cv2.imread(images_changed_path)
     image_changed = imutils.resize(image_changed_raw, width=800)
 
-    # Draw bounding boxes around detected contours
-    image_with_contours = draw_contours(image_changed, contours)
+    # Detect the floor in both images
+    floor_mask_ref = detect_floor(image_reference)
+    floor_mask_changed = detect_floor(image_changed)
 
-    # Display the result
-    cv2.imshow("Detected Changes", image_with_contours)
+    # Apply the masks to isolate the floor
+    floor_ref = cv2.bitwise_and(image_reference, image_reference, mask=floor_mask_ref)
+    floor_changed = cv2.bitwise_and(image_changed, image_changed, mask=floor_mask_changed)
+
+    # Convert the images to grayscale
+    gray_ref = cv2.cvtColor(floor_ref, cv2.COLOR_BGR2GRAY)
+    gray_changed = cv2.cvtColor(floor_changed, cv2.COLOR_BGR2GRAY)
+
+    # Apply histogram equalization for better contrast
+    gray_ref = cv2.equalizeHist(gray_ref)
+    gray_changed = cv2.equalizeHist(gray_changed)
+
+    # Calculate the absolute difference between the two images
+    diff = cv2.absdiff(gray_ref, gray_changed)
+
+    # Apply Gaussian blur to reduce noise
+    blurred_diff = cv2.GaussianBlur(diff, (9, 9), 0)
+
+    # Threshold to isolate changes
+    _, thresh = cv2.threshold(blurred_diff, 95, 255, cv2.THRESH_BINARY)
+
+    # Clean up small elements with morphological operations
+    kernel = np.ones((201, 201), np.uint8)
+    cleaned = cv2.morphologyEx(thresh, cv2.MORPH_CLOSE, kernel)
+
+    # Detect contours around changes
+    contours, _ = cv2.findContours(cleaned, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+
+    # Draw bounding boxes around changes
+    for contour in contours:
+        if cv2.contourArea(contour) > 10:  # Adjust threshold as needed
+            x, y, w, h = cv2.boundingRect(contour)
+            cv2.rectangle(image_changed, (x, y), (x + w, y + h), (0, 255, 0), 2)
+
+    # Show the image with detected changes
+    cv2.imshow(image_name, image_changed)
     cv2.waitKey(0)
     cv2.destroyAllWindows()
 
-# Example usage
-ref_name = "/Reference.JPG" if os.name != 'nt' else "\\Reference.JPG"
-img_name = "/IMG_6560.JPG" if os.name != 'nt' else "\\IMG_6557.JPG"
-threshold_value = 95  # Adjust this value based on your needs
-detect_changes(config.salon_path + ref_name, config.salon_path + img_name, threshold_value)
+def process_folder(folder_path):
+    # Get the reference image path
+    ref_name = "/Reference.JPG" if os.name != 'nt' else "\\Reference.JPG"
+    image_reference_path = folder_path + ref_name
+
+    # Get all changed images in the folder
+    changed_images = config.get_changed_images(folder_path)
+
+    # Process each changed image
+    for img_name in changed_images:
+        images_changed_path = os.path.join(folder_path, img_name)
+        detect_changes_absdiff(image_reference_path, images_changed_path, img_name)
+
+if __name__ == "__main__":
+    # Select the folder to process
+    folder_selection = input("Select the folder to process (chambre, salon, cuisine): ").strip().lower()
+
+    if folder_selection == "chambre":
+        folder_path = config.chambre_path
+    elif folder_selection == "salon":
+        folder_path = config.salon_path
+    elif folder_selection == "cuisine":
+        folder_path = config.cuisine_path
+    else:
+        print("Invalid selection. Please choose from chambre, salon, or cuisine.")
+        exit(1)
+
+    # Process the selected folder
+    process_folder(folder_path)
